@@ -74,7 +74,7 @@ export class DocumentsService {
     const document = await this.prisma.document.create({
       data: {
         verificationId: dto.verificationId,
-        templateId: dto.templateId ?? null,
+        templateId: dto.templateId || null,
         docType: dto.docType,
         filePath: storagePath,
       },
