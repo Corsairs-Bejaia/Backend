@@ -21,6 +21,8 @@ model User {
   verifications     Verification[]
   tenantConfig      TenantConfig?
   webhookDeliveries WebhookDelivery[]
+  reviewedReports   VerificationReport[] @relation("ReviewedBy")
+  reviewComments    ReviewComment[]
 
   @@map("users")
 }
@@ -74,12 +76,13 @@ model Verification {
   startedAt          DateTime  @default(now()) @map("started_at")
   completedAt        DateTime? @map("completed_at")
 
-  doctor            Doctor             @relation(fields: [doctorId], references: [id])
-  tenant            User               @relation(fields: [tenantId], references: [id])
+  doctor            Doctor              @relation(fields: [doctorId], references: [id])
+  tenant            User                @relation(fields: [tenantId], references: [id])
   steps             VerificationStep[]
   documents         Document[]
   auditLogs         AuditLog[]
   webhookDeliveries WebhookDelivery[]
+  report            VerificationReport?
 
   @@map("verifications")
 }
@@ -213,4 +216,48 @@ model TenantConfig {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("tenant_configs")
+}
+
+// ─── Verification Reports ────────────────────────────────────────────────────
+// Created automatically when a verification ends in manual_review or rejected.
+// Tenant reviewer reads the AI-generated content and submits a final decision.
+
+model VerificationReport {
+  id             String    @id @default(cuid())
+  verificationId String    @unique @map("verification_id")
+  // AI-generated content (markdown or JSON string) summarising the result.
+  // Populated by the processor stub now; replaced by AiClientService later.
+  contentFormat  String    @default("markdown") @map("content_format")
+  contentRaw     String    @map("content_raw")
+  // Review state: pending_review → reviewed
+  status         String    @default("pending_review")
+  // Set when the tenant reviewer submits a decision
+  decision       String? // "approved" | "rejected" | "resubmit"
+  decisionNote   String?   @map("decision_note")
+  reviewedBy     String?   @map("reviewed_by")
+  reviewedAt     DateTime? @map("reviewed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  verification Verification    @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+  reviewer     User?           @relation("ReviewedBy", fields: [reviewedBy], references: [id])
+  comments     ReviewComment[]
+
+  @@map("verification_reports")
+}
+
+// ─── Review Comments ─────────────────────────────────────────────────────────
+// Inline comments added by the tenant reviewer while inspecting a report.
+
+model ReviewComment {
+  id        String   @id @default(cuid())
+  reportId  String   @map("report_id")
+  authorId  String   @map("author_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  report VerificationReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  author User               @relation(fields: [authorId], references: [id])
+
+  @@map("review_comments")
 }

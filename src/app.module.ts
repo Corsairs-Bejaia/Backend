@@ -24,6 +24,7 @@ import { DocumentsModule } from '@modules/documents/documents.module';
 import { VerificationsModule } from '@modules/verifications/verifications.module';
 import { DashboardModule } from '@modules/dashboard/dashboard.module';
 import { DoctorsModule } from '@modules/doctors/doctors.module';
+import { ReportsModule } from '@modules/reports/reports.module';
 
 // Core
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -72,6 +73,7 @@ import { LoggingInterceptor } from '@core/interceptors/logging.interceptor';
     VerificationsModule,
     DashboardModule,
     DoctorsModule,
+    ReportsModule,
     // WebhooksModule,
     // AiClientModule,
     // ScrapingClientModule,

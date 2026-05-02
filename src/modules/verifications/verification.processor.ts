@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '@shared/prisma/prisma.service';
 import { CacheService } from '@shared/cache/cache.service';
+import { ReportsService } from '@modules/reports/reports.service';
 import {
   VERIFICATION_QUEUE,
   VERIFY_DOCTOR_JOB,
@@ -42,6 +43,7 @@ export class VerificationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly reportsService: ReportsService,
   ) {
     super();
   }
@@ -171,6 +173,28 @@ export class VerificationProcessor extends WorkerHost {
         },
       });
 
+      // ── Auto-create report for decisions requiring human review ────────────
+      if (decision === 'manual_review' || decision === 'rejected') {
+        // TODO: replace stub content with AiClientService.generateReport() output
+        // when available. The AI service will produce a structured markdown/JSON
+        // summary including field-level extraction results, confidence breakdown,
+        // and discrepancies found.
+        const reportContent = this.buildStubReport({
+          verificationId,
+          score,
+          decision,
+          documentCount: documents.length,
+        });
+        await this.reportsService.createForVerification(
+          verificationId,
+          reportContent,
+          'markdown',
+        );
+        this.logger.log(
+          `Report created for verification ${verificationId} (${decision})`,
+        );
+      }
+
       await emit({ type: 'completed', data: { score, decision } });
       this.logger.log(
         `Verification ${verificationId} → ${decision} (score: ${score})`,
@@ -196,5 +220,46 @@ export class VerificationProcessor extends WorkerHost {
 
       throw err; // let BullMQ handle retries
     }
+  }
+
+  // ─── Stub report builder ──────────────────────────────────────────────────
+  // TODO: remove once AiClientService.generateReport() is wired in.
+
+  private buildStubReport(ctx: {
+    verificationId: string;
+    score: number;
+    decision: string;
+    documentCount: number;
+  }): string {
+    const scorePercent = Math.round(ctx.score * 100);
+    const decisionLabel =
+      ctx.decision === 'manual_review' ? 'Révision manuelle requise' : 'Rejeté';
+
+    return [
+      `# Rapport de vérification`,
+      ``,
+      `**Identifiant** : \`${ctx.verificationId}\`  `,
+      `**Score** : ${scorePercent} / 100  `,
+      `**Décision** : ${decisionLabel}  `,
+      `**Documents analysés** : ${ctx.documentCount}  `,
+      ``,
+      `## Résumé`,
+      ``,
+      `Ce rapport a été généré automatiquement à l'issue du pipeline de vérification.`,
+      `Un examinateur humain doit valider ou rejeter ce dossier.`,
+      ``,
+      `## Étapes du pipeline`,
+      ``,
+      `| Étape | Statut | Confiance |`,
+      `|-------|--------|-----------|`,
+      `| Extraction IA | Complété | ${scorePercent}% |`,
+      `| Vérification CNAS | Ignoré (service non configuré) | — |`,
+      ``,
+      `## Action requise`,
+      ``,
+      ctx.decision === 'manual_review'
+        ? `Le score (${scorePercent}%) est dans la plage de révision manuelle (60–85). Veuillez examiner les documents et soumettre une décision.`
+        : `Le score (${scorePercent}%) est inférieur au seuil de révision (60). Veuillez examiner les documents avant de confirmer le rejet.`,
+    ].join('\n');
   }
 }
