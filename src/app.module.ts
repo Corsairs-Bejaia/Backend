@@ -11,6 +11,7 @@ import redisConfig from '@config/redis.config';
 import jwtConfig from '@config/jwt.config';
 import storageConfig from '@config/storage.config';
 import servicesConfig from '@config/services.config';
+import webhooksConfig from '@config/webhooks.config';
 
 // Shared
 import { SharedModule } from '@shared/shared.module';
@@ -25,6 +26,7 @@ import { VerificationsModule } from '@modules/verifications/verifications.module
 import { DashboardModule } from '@modules/dashboard/dashboard.module';
 import { DoctorsModule } from '@modules/doctors/doctors.module';
 import { ReportsModule } from '@modules/reports/reports.module';
+import { WebhooksModule } from '@modules/webhooks/webhooks.module';
 
 // Core
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -45,6 +47,7 @@ import { LoggingInterceptor } from '@core/interceptors/logging.interceptor';
         jwtConfig,
         storageConfig,
         servicesConfig,
+        webhooksConfig,
       ],
     }),
 
@@ -74,7 +77,7 @@ import { LoggingInterceptor } from '@core/interceptors/logging.interceptor';
     DashboardModule,
     DoctorsModule,
     ReportsModule,
-    // WebhooksModule,
+    WebhooksModule,
     // AiClientModule,
     // ScrapingClientModule,
   ],

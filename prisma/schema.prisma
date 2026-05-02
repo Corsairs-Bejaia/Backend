@@ -16,13 +16,13 @@ model User {
   planTier     String   @default("free") @map("plan_tier")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  apiKeys           ApiKey[]
-  doctors           Doctor[]
-  verifications     Verification[]
-  tenantConfig      TenantConfig?
-  webhookDeliveries WebhookDelivery[]
-  reviewedReports   VerificationReport[] @relation("ReviewedBy")
-  reviewComments    ReviewComment[]
+  apiKeys          ApiKey[]
+  doctors          Doctor[]
+  verifications    Verification[]
+  tenantConfig     TenantConfig?
+  webhookEndpoints WebhookEndpoint[]
+  reviewedReports  VerificationReport[] @relation("ReviewedBy")
+  reviewComments   ReviewComment[]
 
   @@map("users")
 }
@@ -76,13 +76,12 @@ model Verification {
   startedAt          DateTime  @default(now()) @map("started_at")
   completedAt        DateTime? @map("completed_at")
 
-  doctor            Doctor              @relation(fields: [doctorId], references: [id])
-  tenant            User                @relation(fields: [tenantId], references: [id])
-  steps             VerificationStep[]
-  documents         Document[]
-  auditLogs         AuditLog[]
-  webhookDeliveries WebhookDelivery[]
-  report            VerificationReport?
+  doctor    Doctor              @relation(fields: [doctorId], references: [id])
+  tenant    User                @relation(fields: [tenantId], references: [id])
+  steps     VerificationStep[]
+  documents Document[]
+  auditLogs AuditLog[]
+  report    VerificationReport?
 
   @@map("verifications")
 }
@@ -181,37 +180,35 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// ─── Webhook Deliveries ──────────────────────────────────────────────────────
+// ─── Webhook Endpoints ───────────────────────────────────────────────────────
+// Tenant-facing webhook endpoints. svixEndpointId is internal only — never
+// exposed to the tenant. Tenants interact using our own `id` field.
 
-model WebhookDelivery {
-  id             String    @id @default(cuid())
-  verificationId String    @map("verification_id")
-  tenantId       String    @map("tenant_id")
+model WebhookEndpoint {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
   url            String
-  payload        Json
-  status         String    @default("pending")
-  attempts       Int       @default(0)
-  responseCode   Int?      @map("response_code")
-  lastAttemptAt  DateTime? @map("last_attempt_at")
+  description    String?
+  eventTypes     String[] @map("event_types")
+  isActive       Boolean  @default(true) @map("is_active")
+  svixEndpointId String   @map("svix_endpoint_id")
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  verification Verification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
-  tenant       User         @relation(fields: [tenantId], references: [id])
+  tenant User @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@map("webhook_deliveries")
+  @@map("webhook_endpoints")
 }
 
 // ─── Tenant Configs ──────────────────────────────────────────────────────────
 
 model TenantConfig {
-  id                     String  @id @default(cuid())
-  userId                 String  @unique @map("user_id")
-  requiredStepsJson      Json?   @map("required_steps_json")
-  optionalStepsJson      Json?   @map("optional_steps_json")
-  autoApproveThreshold   Float   @default(85) @map("auto_approve_threshold")
-  manualReviewThreshold  Float   @default(60) @map("manual_review_threshold")
-  webhookUrl             String? @map("webhook_url")
-  webhookSecret          String? @map("webhook_secret")
-  allowedSpecialtiesJson Json?   @map("allowed_specialties_json")
+  id                     String @id @default(cuid())
+  userId                 String @unique @map("user_id")
+  requiredStepsJson      Json?  @map("required_steps_json")
+  optionalStepsJson      Json?  @map("optional_steps_json")
+  autoApproveThreshold   Float  @default(85) @map("auto_approve_threshold")
+  manualReviewThreshold  Float  @default(60) @map("manual_review_threshold")
+  allowedSpecialtiesJson Json?  @map("allowed_specialties_json")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

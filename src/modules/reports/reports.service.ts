@@ -8,10 +8,19 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@shared/prisma/prisma.service';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { ReviewDecision, SubmitDecisionDto } from './dto/submit-decision.dto';
+import { WebhooksService } from '@modules/webhooks/webhooks.service';
+import {
+  WebhookEventType,
+  type ReportCreatedPayload,
+  type ReportReviewedPayload,
+} from '@modules/webhooks/event-types';
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   // ─── Review queue ────────────────────────────────────────────────────────
 
@@ -182,6 +191,32 @@ export class ReportsService {
       },
     );
 
+    // ── Fire report.reviewed webhook (approved / rejected only) ──────────────
+    if (
+      dto.decision === ReviewDecision.APPROVED ||
+      dto.decision === ReviewDecision.REJECTED
+    ) {
+      const webhookDecision =
+        dto.decision === ReviewDecision.APPROVED
+          ? 'human_approved'
+          : 'human_rejected';
+      const payload: ReportReviewedPayload = {
+        reportId: id,
+        verificationId: report.verificationId,
+        tenantId,
+        decision: webhookDecision,
+        decisionNote: dto.decisionNote ?? null,
+        reviewedAt:
+          updatedReport.reviewedAt?.toISOString() ?? new Date().toISOString(),
+      };
+      this.webhooks.send(
+        tenantId,
+        WebhookEventType.REPORT_REVIEWED,
+        payload,
+        `report.reviewed.${id}`,
+      );
+    }
+
     return updatedReport;
   }
 
@@ -218,12 +253,15 @@ export class ReportsService {
   // ─── Internal: create report after verification pipeline ─────────────────
   // Called by VerificationProcessor — not exposed via HTTP.
 
-  createForVerification(
+  async createForVerification(
     verificationId: string,
     content: string,
     format: 'markdown' | 'json' = 'markdown',
+    tenantId?: string,
+    score?: number,
+    verificationDecision?: string,
   ) {
-    return this.prisma.verificationReport.create({
+    const report = await this.prisma.verificationReport.create({
       data: {
         verificationId,
         contentRaw: content,
@@ -231,5 +269,24 @@ export class ReportsService {
         status: 'pending_review',
       },
     });
+
+    if (tenantId && verificationDecision !== undefined && score !== undefined) {
+      const payload: ReportCreatedPayload = {
+        reportId: report.id,
+        verificationId,
+        tenantId,
+        verificationDecision,
+        score,
+        createdAt: report.createdAt.toISOString(),
+      };
+      this.webhooks.send(
+        tenantId,
+        WebhookEventType.REPORT_CREATED,
+        payload,
+        `report.created.${report.id}`,
+      );
+    }
+
+    return report;
   }
 }

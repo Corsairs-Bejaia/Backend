@@ -4,6 +4,12 @@ import { Job } from 'bullmq';
 import { PrismaService } from '@shared/prisma/prisma.service';
 import { CacheService } from '@shared/cache/cache.service';
 import { ReportsService } from '@modules/reports/reports.service';
+import { WebhooksService } from '@modules/webhooks/webhooks.service';
+import {
+  WebhookEventType,
+  type VerificationCompletedPayload,
+  type VerificationFailedPayload,
+} from '@modules/webhooks/event-types';
 import {
   VERIFICATION_QUEUE,
   VERIFY_DOCTOR_JOB,
@@ -44,6 +50,7 @@ export class VerificationProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly reportsService: ReportsService,
+    private readonly webhooks: WebhooksService,
   ) {
     super();
   }
@@ -158,10 +165,11 @@ export class VerificationProcessor extends WorkerHost {
       const score = aiResult.confidence;
       const decision =
         score >= 0.8 ? 'approved' : score >= 0.5 ? 'manual_review' : 'rejected';
+      const completedAt = new Date();
 
       await this.prisma.verification.update({
         where: { id: verificationId },
-        data: { status: 'completed', score, decision, completedAt: new Date() },
+        data: { status: 'completed', score, decision, completedAt },
       });
 
       await this.prisma.auditLog.create({
@@ -189,11 +197,57 @@ export class VerificationProcessor extends WorkerHost {
           verificationId,
           reportContent,
           'markdown',
+          tenantId,
+          score,
+          decision,
         );
         this.logger.log(
           `Report created for verification ${verificationId} (${decision})`,
         );
       }
+
+      // ── Fire verification.completed webhook ───────────────────────────────
+      const [allSteps, verificationWithDoctor] = await Promise.all([
+        this.prisma.verificationStep.findMany({
+          where: { verificationId },
+          orderBy: { startedAt: 'asc' },
+        }),
+        this.prisma.verification.findUnique({
+          where: { id: verificationId },
+          include: { doctor: true },
+        }),
+      ]);
+
+      const webhookPayload: VerificationCompletedPayload = {
+        verificationId,
+        tenantId,
+        doctor: {
+          id: verificationWithDoctor!.doctor.id,
+          fullNameFr: verificationWithDoctor!.doctor.fullNameFr,
+          fullNameAr: verificationWithDoctor!.doctor.fullNameAr ?? null,
+          nationalIdNumber: verificationWithDoctor!.doctor.nationalIdNumber,
+        },
+        score,
+        decision,
+        completedAt: completedAt.toISOString(),
+        steps: allSteps.map((s) => ({
+          stepType: s.stepType,
+          status: s.status,
+          confidence: s.confidence ?? null,
+        })),
+        documents: documents.map((d) => ({
+          id: d.id,
+          docType: d.docType,
+          authenticityScore: d.authenticityScore ?? null,
+        })),
+      };
+
+      this.webhooks.send(
+        tenantId,
+        WebhookEventType.VERIFICATION_COMPLETED,
+        webhookPayload,
+        `verification.completed.${verificationId}`,
+      );
 
       await emit({ type: 'completed', data: { score, decision } });
       this.logger.log(
@@ -216,6 +270,20 @@ export class VerificationProcessor extends WorkerHost {
           data: { message },
           timestamp: new Date().toISOString(),
         }),
+      );
+
+      // ── Fire verification.failed webhook ──────────────────────────────────
+      const failedPayload: VerificationFailedPayload = {
+        verificationId,
+        tenantId,
+        error: message,
+        failedAt: new Date().toISOString(),
+      };
+      this.webhooks.send(
+        tenantId,
+        WebhookEventType.VERIFICATION_FAILED,
+        failedPayload,
+        `verification.failed.${verificationId}`,
       );
 
       throw err; // let BullMQ handle retries
