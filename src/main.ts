@@ -12,8 +12,9 @@ async function bootstrap() {
   // ── Security ─────────────────────────────────────────────────────────────
   app.use(helmet());
   app.enableCors({
-    origin: config.get<string>('app.frontendUrl'),
-    credentials: true,
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
   });
 
   // ── Global prefix ─────────────────────────────────────────────────────────
