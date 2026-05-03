@@ -8,9 +8,11 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiSecurity,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -19,14 +21,19 @@ import { WebhooksService } from './webhooks.service';
 import { CreateEndpointDto } from './dto/create-endpoint.dto';
 import { UpdateEndpointDto } from './dto/update-endpoint.dto';
 import { CurrentUser } from '@core/decorators/current-user.decorator';
+import { FlexAuthGuard } from '@core/guards/flex-auth.guard';
+import { Public } from '@core/decorators/public.decorator';
 
 interface JwtUser {
-  id: string;
+  tenantId: string;
   email: string;
 }
 
-@ApiTags('webhooks')
+@ApiTags('Webhooks')
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@Public()
+@UseGuards(FlexAuthGuard)
 @Controller('webhooks/endpoints')
 export class WebhooksController {
   constructor(private readonly webhooks: WebhooksService) {}
@@ -34,20 +41,20 @@ export class WebhooksController {
   @Post()
   @ApiOperation({ summary: 'Register a new webhook endpoint' })
   create(@CurrentUser() user: JwtUser, @Body() dto: CreateEndpointDto) {
-    return this.webhooks.createEndpoint(user.id, dto);
+    return this.webhooks.createEndpoint(user.tenantId, dto);
   }
 
   @Get()
   @ApiOperation({ summary: 'List all webhook endpoints' })
   list(@CurrentUser() user: JwtUser) {
-    return this.webhooks.listEndpoints(user.id);
+    return this.webhooks.listEndpoints(user.tenantId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a webhook endpoint' })
   @ApiParam({ name: 'id' })
   getOne(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.webhooks.getEndpoint(user.id, id);
+    return this.webhooks.getEndpoint(user.tenantId, id);
   }
 
   @Patch(':id')
@@ -58,7 +65,7 @@ export class WebhooksController {
     @Param('id') id: string,
     @Body() dto: UpdateEndpointDto,
   ) {
-    return this.webhooks.updateEndpoint(user.id, id, dto);
+    return this.webhooks.updateEndpoint(user.tenantId, id, dto);
   }
 
   @Delete(':id')
@@ -66,7 +73,7 @@ export class WebhooksController {
   @ApiOperation({ summary: 'Delete a webhook endpoint' })
   @ApiParam({ name: 'id' })
   async remove(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    await this.webhooks.deleteEndpoint(user.id, id);
+    await this.webhooks.deleteEndpoint(user.tenantId, id);
   }
 
   @Get(':id/secret')
@@ -77,20 +84,20 @@ export class WebhooksController {
   })
   @ApiParam({ name: 'id' })
   getSecret(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.webhooks.getEndpointSecret(user.id, id);
+    return this.webhooks.getEndpointSecret(user.tenantId, id);
   }
 
   @Post(':id/rotate-secret')
   @ApiOperation({ summary: 'Rotate the signing secret for an endpoint' })
   @ApiParam({ name: 'id' })
   rotateSecret(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.webhooks.rotateEndpointSecret(user.id, id);
+    return this.webhooks.rotateEndpointSecret(user.tenantId, id);
   }
 
   @Get(':id/deliveries')
   @ApiOperation({ summary: 'List recent delivery attempts for an endpoint' })
   @ApiParam({ name: 'id' })
   deliveries(@CurrentUser() user: JwtUser, @Param('id') id: string) {
-    return this.webhooks.listDeliveries(user.id, id);
+    return this.webhooks.listDeliveries(user.tenantId, id);
   }
 }

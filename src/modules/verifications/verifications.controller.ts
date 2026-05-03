@@ -9,12 +9,14 @@ import {
   ParseIntPipe,
   DefaultValuePipe,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { ParseCuidPipe } from '@core/pipes/parse-cuid.pipe';
 import type { Response } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
+  ApiSecurity,
   ApiOperation,
   ApiQuery,
   ApiParam,
@@ -26,6 +28,7 @@ import { CreateVerificationDto } from './dto/create-verification.dto';
 import { CurrentUser } from '@core/decorators/current-user.decorator';
 import { CacheService } from '@shared/cache/cache.service';
 import { Public } from '@core/decorators/public.decorator';
+import { FlexAuthGuard } from '@core/guards/flex-auth.guard';
 
 const VERIFICATION_EXAMPLE = {
   id: 'clx9vrf00001',
@@ -77,6 +80,9 @@ const ENVELOPE = (data: unknown) => ({ success: true, data });
 
 @ApiTags('Verifications')
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@Public()
+@UseGuards(FlexAuthGuard)
 @Controller('verifications')
 export class VerificationsController {
   constructor(

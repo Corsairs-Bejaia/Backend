@@ -20,11 +20,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   // The returned object is attached to req.user.
   // userId === tenantId in this system (one User = one Tenant).
-  // All three aliases are exposed so controllers can use whichever
-  // name is most semantically clear for their context.
+  // All aliases are exposed so controllers can use whichever is clearest.
   validate(payload: JwtPayload) {
     return {
       sub: payload.sub,
+      id: payload.sub,
       userId: payload.sub,
       tenantId: payload.sub,
       email: payload.email,

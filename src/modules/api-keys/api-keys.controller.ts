@@ -7,10 +7,12 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
+  ApiSecurity,
   ApiOperation,
   ApiBody,
   ApiParam,
@@ -19,6 +21,8 @@ import {
 import { ApiKeysService } from './api-keys.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { CurrentUser } from '@core/decorators/current-user.decorator';
+import { FlexAuthGuard } from '@core/guards/flex-auth.guard';
+import { Public } from '@core/decorators/public.decorator';
 
 const KEY_EXAMPLE = {
   id: 'clx9key00001',
@@ -41,6 +45,9 @@ const ENVELOPE = (data: unknown) => ({ success: true, data });
 
 @ApiTags('API Keys')
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@Public()
+@UseGuards(FlexAuthGuard)
 @Controller('api-keys')
 export class ApiKeysController {
   constructor(private readonly apiKeysService: ApiKeysService) {}
