@@ -85,6 +85,75 @@ export class DocumentsService {
     return { document, presignedUrl };
   }
 
+  // ─── Bulk upload (process files in parallel, collect per-file results) ───
+
+  async uploadBulk(
+    files: Express.Multer.File[],
+    verificationId: string,
+    docTypes: string[],
+    tenantId: string,
+  ) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('At least one file must be provided');
+    }
+    // Verify the verification belongs to this tenant once, upfront
+    const verification = await this.prisma.verification.findUnique({
+      where: { id: verificationId },
+    });
+    if (!verification) throw new NotFoundException('Verification not found');
+    if (verification.tenantId !== tenantId) throw new ForbiddenException();
+
+    const results = await Promise.allSettled(
+      files.map(async (file, i) => {
+        const docType = docTypes[i] ?? 'other';
+
+        if (file.size > MAX_SIZE_BYTES) {
+          throw new BadRequestException(
+            `File "${file.originalname}" exceeds the 20 MB size limit`,
+          );
+        }
+
+        const detectedMime = detectMime(file.buffer);
+        if (!detectedMime || !ALLOWED_MIME[detectedMime]) {
+          throw new BadRequestException(
+            `File "${file.originalname}" is not a supported type (JPEG, PNG, PDF)`,
+          );
+        }
+
+        const ext = ALLOWED_MIME[detectedMime];
+        const storagePath = `${tenantId}/${verificationId}/${uuidv4()}.${ext}`;
+
+        await this.storage.uploadFile(file.buffer, storagePath, detectedMime);
+
+        const document = await this.prisma.document.create({
+          data: { verificationId, docType, filePath: storagePath },
+        });
+
+        const presignedUrl = await this.storage.getPresignedUrl(storagePath);
+        return { document, presignedUrl };
+      }),
+    );
+
+    const succeeded = results
+      .map((r, i) => (r.status === 'fulfilled' ? r.value : null))
+      .filter(Boolean);
+
+    const failed = results
+      .map((r, i) =>
+        r.status === 'rejected'
+          ? {
+              index: i,
+              filename: files[i]?.originalname ?? `file[${i}]`,
+              error:
+                r.reason instanceof Error ? r.reason.message : String(r.reason),
+            }
+          : null,
+      )
+      .filter(Boolean);
+
+    return { uploaded: succeeded, errors: failed };
+  }
+
   // ─── List for a verification ──────────────────────────────────────────────
 
   async findByVerification(verificationId: string, tenantId: string) {

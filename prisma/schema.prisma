@@ -60,6 +60,7 @@ model Doctor {
   tenant        User           @relation(fields: [tenantId], references: [id])
   verifications Verification[]
 
+  @@unique([tenantId, nationalIdNumber])
   @@map("doctors")
 }
 
@@ -75,6 +76,9 @@ model Verification {
   decision           String?
   startedAt          DateTime  @default(now()) @map("started_at")
   completedAt        DateTime? @map("completed_at")
+  sessionToken       String?   @unique @map("session_token")
+  sessionExpiresAt   DateTime? @map("session_expires_at")
+  redirectUrl        String?   @map("redirect_url")
 
   doctor    Doctor              @relation(fields: [doctorId], references: [id])
   tenant    User                @relation(fields: [tenantId], references: [id])

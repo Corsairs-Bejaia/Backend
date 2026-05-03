@@ -6,11 +6,11 @@ import {
   Body,
   Query,
   Res,
-  ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
   HttpStatus,
 } from '@nestjs/common';
+import { ParseCuidPipe } from '@core/pipes/parse-cuid.pipe';
 import type { Response } from 'express';
 import {
   ApiTags,
@@ -32,10 +32,10 @@ const VERIFICATION_EXAMPLE = {
   doctorId: 'clx9doc00002',
   tenantId: 'clx9usr00001',
   status: 'pending',
-  score: null,
-  decision: null,
   startedAt: '2026-05-01T09:55:00.000Z',
-  completedAt: null,
+  redirectUrl: 'https://clinic.dz/verification-done',
+  portalUrl: 'https://verify.meayar.dz/verify/a3f9...token',
+  expiresAt: '2026-05-01T10:55:00.000Z',
 };
 
 const VERIFICATION_COMPLETED_EXAMPLE = {
@@ -88,18 +88,24 @@ export class VerificationsController {
 
   @Post()
   @ApiOperation({
-    summary: 'Start a new verification workflow for a doctor',
+    summary: 'Create a verification session for a doctor',
     description:
-      'Creates a `Verification` record, enqueues a BullMQ job, and immediately ' +
-      'returns the new record (status: `pending`). The pipeline runs asynchronously; ' +
-      'subscribe to `GET /verifications/:id/stream` (SSE) to watch progress in real time.\n\n' +
-      '**Pipeline stages:**\n' +
+      'Creates a `Verification` record and returns a one-time **portal URL** ' +
+      'that you redirect the doctor to. The doctor uploads their documents on the ' +
+      'Meayar portal and submits; the pipeline then runs asynchronously.\n\n' +
+      '**Doctor identity:** supply either an existing `doctorId` or inline `doctor` ' +
+      'data (find-or-create by `nationalIdNumber` within your tenant).\n\n' +
+      "**Portal redirect:** open `portalUrl` in the doctor's browser. The session " +
+      'expires at `expiresAt`.\n\n' +
+      '**Completion:** subscribe to `GET /verifications/:id/stream` (SSE) from your ' +
+      'dashboard, or wait for the `verification.completed` webhook.\n\n' +
+      '**Pipeline stages (run after portal submission):**\n' +
       '1. AI document extraction (confidence score)\n' +
       '2. CNAS affiliation check\n' +
-      '3. Score → decision mapping:\n' +
+      '3. Score → decision:\n' +
       '   - ≥ 80 % → `approved`\n' +
-      '   - 50–79 % → `manual_review` (report auto-created)\n' +
-      '   - < 50 % → `rejected` (report auto-created)',
+      '   - 50–79 % → `manual_review`\n' +
+      '   - < 50 % → `rejected`',
   })
   @ApiBody({ type: CreateVerificationDto })
   @ApiResponse({
@@ -226,7 +232,7 @@ export class VerificationsController {
     },
   })
   findOne(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
     return this.verificationsService.findOne(id, user.tenantId);

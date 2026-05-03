@@ -6,10 +6,11 @@ import {
   Body,
   UseInterceptors,
   UploadedFile,
-  ParseUUIDPipe,
+  UploadedFiles,
   HttpStatus,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { ParseCuidPipe } from '@core/pipes/parse-cuid.pipe';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -20,8 +21,13 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { DocumentsService } from './documents.service';
-import { UploadDocumentDto } from './dto/upload-document.dto';
+import {
+  UploadDocumentDto,
+  ALLOWED_DOC_TYPES,
+} from './dto/upload-document.dto';
 import { CurrentUser } from '@core/decorators/current-user.decorator';
+
+const MAX_BULK_FILES = 10;
 
 const DOC_EXAMPLE = {
   id: 'clx9doc00001',
@@ -126,6 +132,96 @@ export class DocumentsController {
     return this.documentsService.upload(file, dto, user.tenantId);
   }
 
+  // ── Bulk upload (up to 10 files, one verification) ────────────────────────
+
+  @Post('upload-bulk')
+  @ApiOperation({
+    summary: 'Upload up to 10 documents in a single request',
+    description:
+      'Accepts multiple files under the `files` field and a matching `docTypes` ' +
+      'array (one entry per file, e.g. `docTypes[0]=diploma&docTypes[1]=national_id`). ' +
+      'All files must belong to the same `verificationId`.\n\n' +
+      'Each file is processed independently — failures are collected in `errors` and ' +
+      'do not abort the batch. Returns `{ uploaded: [...], errors: [...] }`.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['files', 'verificationId', 'docTypes'],
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: `Up to ${MAX_BULK_FILES} files (JPEG / PNG / PDF, max 20 MB each)`,
+        },
+        verificationId: {
+          type: 'string',
+          description: 'CUID of the target verification',
+          example: 'clx9vrf00002',
+        },
+        docTypes: {
+          type: 'array',
+          items: { type: 'string', enum: [...ALLOWED_DOC_TYPES] },
+          description: 'One docType per file, in the same order as `files`',
+          example: ['diploma', 'national_id'],
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Batch result — uploaded documents and any per-file errors',
+    schema: {
+      example: ENVELOPE({
+        uploaded: [{ document: DOC_EXAMPLE, presignedUrl: 'https://...' }],
+        errors: [
+          { index: 1, filename: 'bad.txt', error: 'Unsupported file type' },
+        ],
+      }),
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'Missing or invalid Bearer token',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Verification does not belong to this tenant',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Verification not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'No files provided or too many files',
+  })
+  @UseInterceptors(
+    FilesInterceptor('files', MAX_BULK_FILES, {
+      limits: { fileSize: 20 * 1024 * 1024 },
+      storage: undefined,
+    }),
+  )
+  uploadBulk(
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body('verificationId') verificationId: string,
+    @Body('docTypes') rawDocTypes: string | string[],
+    @CurrentUser() user: { id: string; tenantId: string },
+  ) {
+    const docTypes = Array.isArray(rawDocTypes)
+      ? rawDocTypes
+      : rawDocTypes
+        ? [rawDocTypes]
+        : [];
+    return this.documentsService.uploadBulk(
+      files,
+      verificationId,
+      docTypes,
+      user.tenantId,
+    );
+  }
+
   // ── List documents for a verification ────────────────────────────────────
 
   @Get('verification/:verificationId')
@@ -154,7 +250,7 @@ export class DocumentsController {
     description: 'Verification does not belong to this tenant',
   })
   findByVerification(
-    @Param('verificationId', ParseUUIDPipe) verificationId: string,
+    @Param('verificationId', ParseCuidPipe) verificationId: string,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
     return this.documentsService.findByVerification(
@@ -204,7 +300,7 @@ export class DocumentsController {
     },
   })
   getPresignedUrl(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
     return this.documentsService.getPresignedUrl(id, user.tenantId);

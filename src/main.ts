@@ -11,7 +11,16 @@ async function bootstrap() {
 
   // ── Security ─────────────────────────────────────────────────────────────
   app.use(helmet());
-  app.enableCors();
+  app.enableCors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-api-key',
+      'X-Session-Token',
+    ],
+  });
 
   // ── Global prefix ─────────────────────────────────────────────────────────
   app.setGlobalPrefix('api');
@@ -36,7 +45,9 @@ async function bootstrap() {
       .addApiKey({ type: 'apiKey', in: 'header', name: 'x-api-key' }, 'api-key')
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api/docs', app, document);
+    SwaggerModule.setup('api/docs', app, document, {
+      jsonDocumentUrl: 'api/docs/json',
+    });
   }
 
   const port = config.get<number>('app.port') ?? 8000;

@@ -7,12 +7,12 @@ import {
   Param,
   Body,
   Query,
-  ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ParseCuidPipe } from '@core/pipes/parse-cuid.pipe';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -190,7 +190,7 @@ export class DoctorsController {
     },
   })
   findOne(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
     return this.doctorsService.findOne(id, user.tenantId);
@@ -231,7 +231,7 @@ export class DoctorsController {
     },
   })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @Body() dto: UpdateDoctorDto,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
@@ -274,7 +274,7 @@ export class DoctorsController {
     },
   })
   remove(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @CurrentUser() user: { id: string; tenantId: string },
   ) {
     return this.doctorsService.remove(id, user.tenantId);
