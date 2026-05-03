@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Svix } from 'svix';
 import { PrismaService } from '@shared/prisma/prisma.service';
@@ -7,7 +12,7 @@ import { CreateEndpointDto } from './dto/create-endpoint.dto';
 import { UpdateEndpointDto } from './dto/update-endpoint.dto';
 
 @Injectable()
-export class WebhooksService {
+export class WebhooksService implements OnModuleInit {
   private readonly logger = new Logger(WebhooksService.name);
   private readonly svix: Svix | null = null;
 
@@ -24,10 +29,44 @@ export class WebhooksService {
     }
   }
 
-  // ─── Lazy Svix app provisioning ───────────────────────────────────────────
-  // Called only when a tenant registers their first endpoint.
-  // uid = tenantId makes the call idempotent — safe to call on every endpoint
-  // creation because Svix returns the existing app if the uid already exists.
+  // ─── Register event types on startup ─────────────────────────────────────
+  // Svix requires event types to exist before they can be used in filterTypes.
+  // create() is idempotent — safe to call on every boot.
+
+  async onModuleInit() {
+    if (!this.svix) return;
+    const eventTypes = [
+      {
+        name: WebhookEventType.VERIFICATION_COMPLETED,
+        description: 'Verification pipeline completed',
+      },
+      {
+        name: WebhookEventType.VERIFICATION_FAILED,
+        description: 'Verification pipeline failed after all retries',
+      },
+      {
+        name: WebhookEventType.REPORT_CREATED,
+        description: 'AI verification report created',
+      },
+      {
+        name: WebhookEventType.REPORT_REVIEWED,
+        description: 'Verification report manually reviewed',
+      },
+    ];
+    for (const et of eventTypes) {
+      try {
+        await this.svix.eventType.create(et);
+      } catch (err: unknown) {
+        // 409 = already exists — fully expected after first boot
+        if ((err as { code?: number }).code !== 409) {
+          this.logger.warn(
+            `Failed to register event type ${et.name}: ${String(err)}`,
+          );
+        }
+      }
+    }
+    this.logger.log('Svix event types registered');
+  }
 
   private async ensureApp(tenantId: string): Promise<void> {
     if (!this.svix) return;
@@ -40,9 +79,11 @@ export class WebhooksService {
         name: user?.companyName ?? tenantId,
         uid: tenantId,
       });
-    } catch (err) {
+    } catch (err: unknown) {
+      // 409 = app already exists — treat as success (idempotent)
+      if ((err as { code?: number }).code === 409) return;
       this.logger.error(
-        `Failed to provision Svix app for tenant ${tenantId}: ${err}`,
+        `Failed to provision Svix app for tenant ${tenantId}: ${String(err)}`,
       );
       throw err; // let createEndpoint surface this as a 500
     }
@@ -200,9 +241,9 @@ export class WebhooksService {
         payload: payload as Record<string, unknown>,
         ...(eventId ? { eventId } : {}),
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         this.logger.error(
-          `Failed to deliver webhook ${eventType} to tenant ${tenantId}: ${err}`,
+          `Failed to deliver webhook ${eventType} to tenant ${tenantId}: ${String(err)}`,
         );
       });
   }

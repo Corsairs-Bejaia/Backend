@@ -48,7 +48,10 @@ export class PortalService {
 
     if (!verification) throw new NotFoundException('Session not found');
 
+    // Only block expired sessions that are still pending — completed/failed
+    // sessions must remain readable so the portal can show the result.
     if (
+      verification.status === 'pending' &&
       verification.sessionExpiresAt &&
       verification.sessionExpiresAt < new Date()
     ) {
@@ -171,7 +174,7 @@ export class PortalService {
       throw new UnauthorizedException('Session has expired');
     }
 
-    return verification.id;
+    return verification.id; // SSE only used while pending/running — expiry is correct here
   }
 
   // ─── SSE subscription (delegates to cache) ───────────────────────────────
