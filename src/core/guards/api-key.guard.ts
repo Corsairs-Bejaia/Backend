@@ -32,8 +32,9 @@ export class ApiKeyGuard implements CanActivate {
 
     if (!rawKey) throw new UnauthorizedException('API key required');
 
-    // Use prefix (first 8 chars) to find the candidate row — avoids full table scan
-    const prefix = rawKey.slice(0, 8);
+    // Prefix is first 16 chars (sk_live_ + 8 random hex) — matches keyPrefix
+    // stored at creation time. Avoids a full table scan before bcrypt compare.
+    const prefix = rawKey.slice(0, 16);
 
     const apiKey = await this.prisma.apiKey.findFirst({
       where: { keyPrefix: prefix, isActive: true },
