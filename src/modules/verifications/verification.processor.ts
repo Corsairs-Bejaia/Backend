@@ -10,6 +10,8 @@ import {
   type VerificationCompletedPayload,
   type VerificationFailedPayload,
 } from '@modules/webhooks/event-types';
+import { Prisma } from '@prisma/client';
+import { AiClientService } from '@modules/ai-client/ai-client.service';
 import {
   VERIFICATION_QUEUE,
   VERIFY_DOCTOR_JOB,
@@ -51,6 +53,7 @@ export class VerificationProcessor extends WorkerHost {
     private readonly cache: CacheService,
     private readonly reportsService: ReportsService,
     private readonly webhooks: WebhooksService,
+    private readonly aiClient: AiClientService,
   ) {
     super();
   }
@@ -85,87 +88,76 @@ export class VerificationProcessor extends WorkerHost {
         where: { verificationId },
       });
 
-      // ── STEP 1: AI Document Extraction ────────────────────────────────────
-      //
-      // TODO: replace stub with AiClientService.runPipeline() when available
-      // Expected call:
-      //   const aiResult = await this.aiClient.runPipeline({ verificationId, documents });
-      //
+      // ── STEP 1: AI Pipeline ───────────────────────────────────────────────
+      // Runs all 7 agents: Classifier → OCR/Extraction → Authenticity →
+      // Consistency → CNAS Scraping → Scoring → Report
       const step1 = await this.prisma.verificationStep.create({
         data: {
           verificationId,
-          stepType: 'ai_extraction',
+          stepType: 'ai_pipeline',
           status: 'running',
           startedAt: new Date(),
         },
       });
-      await emit({ type: 'step_started', step: 'ai_extraction' });
+      await emit({ type: 'step_started', step: 'ai_pipeline' });
 
-      // Stub: accept all documents as extracted with full confidence
-      const aiResult = {
-        extracted: documents.map((d) => ({
-          documentId: d.id,
-          docType: d.docType,
-        })),
-        confidence: 0.95,
-      };
+      const aiResponse = await this.aiClient.runPipeline(verificationId);
+      const scoring = aiResponse.results['scoring'];
+      const authenticity = aiResponse.results['authenticity'];
+      const reportMd = (
+        aiResponse.results['report'] as { report_md?: string } | undefined
+      )?.report_md;
 
       await this.prisma.verificationStep.update({
         where: { id: step1.id },
         data: {
           status: 'completed',
-          resultJson: aiResult,
-          confidence: 0.95,
+          resultJson: aiResponse.results as unknown as Prisma.InputJsonValue,
+          confidence: scoring
+            ? (scoring as { score: number }).score / 100
+            : null,
           completedAt: new Date(),
         },
       });
       await emit({
         type: 'step_completed',
-        step: 'ai_extraction',
-        data: aiResult,
+        step: 'ai_pipeline',
+        data: aiResponse.results,
       });
 
-      // ── STEP 2: CNAS Affiliation Check ─────────────────────────────────────
-      //
-      // TODO: replace stub with ScrapingClientService.verifyCnas() when available
-      // Expected call:
-      //   const cnasResult = await this.scrapingClient.verifyCnas({ nationalId, employerNumber });
-      //
-      const step2 = await this.prisma.verificationStep.create({
-        data: {
-          verificationId,
-          stepType: 'cnas_check',
-          status: 'running',
-          startedAt: new Date(),
-        },
-      });
-      await emit({ type: 'step_started', step: 'cnas_check' });
-
-      // Stub: mark as skipped (no scraping service yet)
-      const cnasResult = {
-        status: 'skipped',
-        reason: 'scraping_service_not_configured',
-      };
-
-      await this.prisma.verificationStep.update({
-        where: { id: step2.id },
-        data: {
-          status: 'completed',
-          resultJson: cnasResult,
-          completedAt: new Date(),
-        },
-      });
-      await emit({
-        type: 'step_completed',
-        step: 'cnas_check',
-        data: cnasResult,
-      });
-
-      // ── Compute overall score + decision ───────────────────────────────────
-      const score = aiResult.confidence;
+      // ── Map AI output to backend domain ───────────────────────────────────
+      // AI score is 0-100; DB stores 0-1.
+      // AI decision 'review' maps to backend 'manual_review'.
+      const rawDecision = scoring
+        ? (scoring as { decision: string }).decision
+        : 'rejected';
+      const score = scoring ? (scoring as { score: number }).score / 100 : 0;
       const decision =
-        score >= 0.8 ? 'approved' : score >= 0.5 ? 'manual_review' : 'rejected';
+        rawDecision === 'approved'
+          ? 'approved'
+          : rawDecision === 'review'
+            ? 'manual_review'
+            : 'rejected';
       const completedAt = new Date();
+
+      // ── Update per-document authenticity scores ────────────────────────────
+      // Capture the score before the transaction; the in-memory `documents`
+      // array will not reflect DB updates, so we use this variable when
+      // building the webhook payload below.
+      let docAuthScore: number | null = null;
+      if (authenticity && documents.length > 0) {
+        docAuthScore =
+          (authenticity as { authenticity_score: number }).authenticity_score /
+          100;
+        await this.prisma.$transaction(
+          documents.map((d) =>
+            this.prisma.document.update({
+              where: { id: d.id },
+              data: { authenticityScore: docAuthScore },
+            }),
+          ),
+        );
+      }
 
       await this.prisma.verification.update({
         where: { id: verificationId },
@@ -181,30 +173,26 @@ export class VerificationProcessor extends WorkerHost {
         },
       });
 
-      // ── Auto-create report for decisions requiring human review ────────────
-      if (decision === 'manual_review' || decision === 'rejected') {
-        // TODO: replace stub content with AiClientService.generateReport() output
-        // when available. The AI service will produce a structured markdown/JSON
-        // summary including field-level extraction results, confidence breakdown,
-        // and discrepancies found.
-        const reportContent = this.buildStubReport({
+      // ── Create report (always, AI-generated when available) ───────────────
+      const reportContent =
+        reportMd ??
+        this.buildFallbackReport({
           verificationId,
           score,
           decision,
           documentCount: documents.length,
         });
-        await this.reportsService.createForVerification(
-          verificationId,
-          reportContent,
-          'markdown',
-          tenantId,
-          score,
-          decision,
-        );
-        this.logger.log(
-          `Report created for verification ${verificationId} (${decision})`,
-        );
-      }
+      await this.reportsService.createForVerification(
+        verificationId,
+        reportContent,
+        'markdown',
+        tenantId,
+        score,
+        decision,
+      );
+      this.logger.log(
+        `Report created for verification ${verificationId} (${decision})`,
+      );
 
       // ── Fire verification.completed webhook ───────────────────────────────
       const [allSteps, verificationWithDoctor] = await Promise.all([
@@ -238,7 +226,9 @@ export class VerificationProcessor extends WorkerHost {
         documents: documents.map((d) => ({
           id: d.id,
           docType: d.docType,
-          authenticityScore: d.authenticityScore ?? null,
+          // Use the freshly computed score — the in-memory `d.authenticityScore`
+          // is stale (loaded before the transaction above).
+          authenticityScore: docAuthScore ?? d.authenticityScore ?? null,
         })),
       };
 
@@ -293,7 +283,7 @@ export class VerificationProcessor extends WorkerHost {
   // ─── Stub report builder ──────────────────────────────────────────────────
   // TODO: remove once AiClientService.generateReport() is wired in.
 
-  private buildStubReport(ctx: {
+  private buildFallbackReport(ctx: {
     verificationId: string;
     score: number;
     decision: string;
