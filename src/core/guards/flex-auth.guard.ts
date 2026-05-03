@@ -1,6 +1,8 @@
 import { Injectable, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiKeyGuard } from './api-key.guard';
+import { PrismaService } from '@shared/prisma/prisma.service';
 
 /**
  * Accepts either:
@@ -12,8 +14,14 @@ import { ApiKeyGuard } from './api-key.guard';
  */
 @Injectable()
 export class FlexAuthGuard extends AuthGuard('jwt') {
-  constructor(private readonly apiKeyGuard: ApiKeyGuard) {
+  private readonly apiKeyGuard: ApiKeyGuard;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
+  ) {
     super();
+    this.apiKeyGuard = new ApiKeyGuard(prisma, reflector);
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
